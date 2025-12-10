@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TourVeron</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <div id="start-overlay" class="overlay">
+        <header>
+            <div class="logo-area">
+                <img src="icon.jpg" alt="Logo" class="main-logo-img" onerror="this.style.display='none'; this.nextElementSibling.style.display='block'">
+                <i class="fas fa-trophy logo-icon" style="display:none"></i>
+            </div>
+            <h1>TourVeron</h1>
+            <div class="center-buttons">
+                <button id="btn-start" class="btn-large" disabled>Запустить турнир</button>
+                <button id="btn-settings" class="btn-large btn-secondary">Настройки</button>
+            </div>
+        </header>
+    </div>
+
+    <div id="settings-modal" class="modal hidden">
+        <div class="modal-content">
+            <span id="close-settings" class="close">&times;</span>
+            <h2>Настройки</h2>
+            <div class="form-group">
+                <label>Метод добавления:</label>
+                <select id="setting-method">
+                    <option value="kick">Kick Chat (Live)</option>
+                    <option value="telegram">Telegram (Parsing)</option>
+                </select>
+            </div>
+            <div id="kick-settings" class="form-group">
+                <label>Канал Kick:</label>
+                <input type="text" id="setting-channel" placeholder="everonn">
+            </div>
+            <div id="telegram-settings" class="form-group hidden">
+                <button id="btn-open-tg-parser" class="btn-action">Загрузить список из TG</button>
+                <small style="display:block; margin-top:5px; color:#aaa;">Загружено: <span id="tg-count">0</span></small>
+            </div>
+            <div id="limit-group" class="form-group">
+                <label>Макс. участников:</label>
+                <input type="number" id="setting-limit" value="50">
+            </div>
+            <div class="modal-actions">
+                <button id="btn-save-settings" class="btn-save">Сохранить и Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="tg-parser-modal" class="modal hidden">
+        <div class="modal-content">
+            <span id="close-tg" class="close">&times;</span>
+            <h2>Импорт из Telegram</h2>
+            <textarea id="tg-raw-input" placeholder="Вставь текст..."></textarea>
+            <div class="modal-actions">
+                <button id="btn-parse-tg" class="btn-save">Обработать</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="add-modal" class="modal hidden">
+        <div class="modal-content">
+            <span onclick="document.getElementById('add-modal').classList.add('hidden')" class="close">&times;</span>
+            <h2>Добавить участника</h2>
+            <div class="form-group">
+                <label>Никнейм:</label>
+                <input type="text" id="manual-name" placeholder="Имя игрока">
+            </div>
+            <div class="form-group">
+                <label>Сообщение / Ставка:</label>
+                <input type="text" id="manual-msg" placeholder="Текст сообщения">
+            </div>
+            <div class="modal-actions">
+                <button id="btn-confirm-add" class="btn-save">Добавить</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="edit-modal" class="modal hidden">
+        <div class="modal-content">
+            <span onclick="document.getElementById('edit-modal').classList.add('hidden')" class="close">&times;</span>
+            <h2>Редактировать</h2>
+            <input type="hidden" id="edit-id">
+            <div class="form-group">
+                <label>Сообщение:</label>
+                <input type="text" id="edit-msg">
+            </div>
+            <div class="modal-actions">
+                <button id="btn-confirm-edit" class="btn-save">Сохранить</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="roulette-modal" class="modal hidden">
+        <div class="reels-wrapper">
+            <div class="slot-column">
+                <div class="slot-machine">
+                    <div class="reel-mask"><ul class="reel" id="strip-left"></ul></div>
+                    <div class="win-line"></div>
+                </div>
+            </div>
+            <div class="vs-badge">VS</div>
+            <div class="slot-column">
+                <div class="slot-machine">
+                    <div class="reel-mask"><ul class="reel" id="strip-right"></ul></div>
+                    <div class="win-line"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="winner-modal" class="modal hidden">
+        <div class="modal-content winner-simple-content" style="text-align: center;">
+            <span onclick="document.getElementById('winner-modal').classList.add('hidden')" class="close">&times;</span>
+            
+            <i class="fas fa-trophy" style="font-size: 60px; color: #ffcc00; margin-bottom: 15px;"></i>
+            
+            <h2 style="color: #fff; text-transform: uppercase; margin: 0 0 20px 0;">Поздравляю!</h2>
+            
+            <h1 id="winner-name-display" style="color: #00ffaa; font-size: 40px; margin: 10px 0; text-shadow: 0 0 20px rgba(0,255,170,0.3);">NAME</h1>
+            
+            <div style="background: #222; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #333;">
+                <p id="winner-msg-display" style="color: #ccc; font-size: 18px; margin: 0; font-style: italic;">Message...</p>
+            </div>
+
+            <button onclick="document.getElementById('winner-modal').classList.add('hidden')" class="btn-save">Отлично</button>
+        </div>
+    </div>
+
+    <div id="app-container" class="hidden">
+        
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="header-logo-row">
+                     <img src="icon.jpg" alt="Icon" class="sidebar-logo-img" onerror="this.style.display='none'">
+                     <span class="sidebar-title">TourVeron</span>
+                </div>
+                <div class="header-row">
+                    <div class="status-wrapper">
+                        <div class="status-indicator" id="status-dot"></div>
+                        <span class="status-text" id="monitor-status">Ожидание</span>
+                    </div>
+                    <div class="menu-controls">
+                        <button id="btn-manual-add" class="btn-icon" title="Добавить вручную">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                        <button id="btn-menu" class="btn-menu-text">СБРОСИТЬ</button>
+                    </div>
+                </div>
+                <h3>Участники: <span id="count">0</span> <span id="limit-display-wrapper">/ <span id="max-count-display">50</span></span></h3>
+            </div>
+            <div id="participants-list" class="participants-list"></div>
+        </aside>
+
+        <main class="main-content">
+            <div class="sidebar-toggle-wrapper">
+                <button id="btn-toggle-sidebar" class="toggle-sidebar-btn" title="Свернуть/Развернуть">
+                    <i class="fas fa-chevron-left"></i>
+                </button>
+            </div>
+
+            <div class="tournament-wrapper" id="tournament-wrapper">
+                <svg id="bracket-lines"></svg>
+                <div id="tournament-area" class="tournament-area"></div>
+            </div>
+
+            <div class="bottom-bar">
+                <div class="bar-left">
+                    <div id="status-connection" class="status-conn">Оффлайн</div>
+                </div>
+                <div class="bar-center">
+                    <button id="btn-roll" class="btn-roll-main">
+                        <i class="fas fa-play"></i> НАЧАТЬ МАТЧ
+                    </button>
+                </div>
+                <div class="bar-right">
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
