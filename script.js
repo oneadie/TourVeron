@@ -1,4 +1,3 @@
-/* --- КОНСТАНТЫ И СОСТОЯНИЕ --- */
 const STATE_KEY = 'tourveron_v6_data'; 
 const REEL_ITEM_HEIGHT = 60; 
 const REEL_WINDOW_HEIGHT = 180; 
@@ -19,7 +18,6 @@ let processedMsgIds = new Set();
 let resizeTimer = null;
 let inputDebounceTimer = null; 
 
-/* --- ИНИЦИАЛИЗАЦИЯ --- */
 window.onload = () => {
     loadState();
     setupEvents();
@@ -37,38 +35,54 @@ window.onload = () => {
     });
 };
 
-/* --- СОБЫТИЯ --- */
 function setupEvents() {
-    // Настройки
     document.getElementById('btn-settings').onclick = () => showModal('settings-modal');
     document.getElementById('close-settings').onclick = () => hideModal('settings-modal');
     document.getElementById('btn-save-settings').onclick = saveSettings;
     
     document.getElementById('setting-method').onchange = toggleMethodSettings;
     
-    // ТГ
     document.getElementById('btn-open-tg-parser').onclick = () => showModal('tg-parser-modal');
     document.getElementById('close-tg').onclick = () => hideModal('tg-parser-modal');
     document.getElementById('btn-parse-tg').onclick = parseTelegram;
 
-    // Управление
     document.getElementById('btn-start').onclick = startSession;
     document.getElementById('btn-menu').onclick = resetToMenu;
     document.getElementById('btn-roll').onclick = startRoulette;
     
-    // Ручное добавление (Модалка)
     document.getElementById('btn-manual-add').onclick = openAddModal;
     document.getElementById('btn-confirm-add').onclick = confirmAddParticipant;
 
-    // Редактирование (Модалка)
     document.getElementById('btn-confirm-edit').onclick = confirmEditParticipant;
 
-    // Сайдбар
     document.getElementById('btn-toggle-sidebar').onclick = toggleSidebar;
+
+    setupEnterKey('add-modal', 'btn-confirm-add');
+    setupEnterKey('settings-modal', 'btn-save-settings');
+    setupEnterKey('edit-modal', 'btn-confirm-edit');
+    setupEnterKey('tg-parser-modal', 'btn-parse-tg');
 }
 
-/* --- UI HELPERS --- */
-function showModal(id) { document.getElementById(id).classList.remove('hidden'); }
+function setupEnterKey(modalId, btnId) {
+    const modal = document.getElementById(modalId);
+    if(!modal) return;
+    const inputs = modal.querySelectorAll('input, select, textarea');
+    inputs.forEach(el => {
+        el.addEventListener('keyup', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                document.getElementById(btnId).click();
+            }
+        });
+    });
+}
+
+function showModal(id) { 
+    const el = document.getElementById(id);
+    el.classList.remove('hidden'); 
+    const inp = el.querySelector('input, textarea');
+    if(inp) setTimeout(() => inp.focus(), 50);
+}
 function hideModal(id) { document.getElementById(id).classList.add('hidden'); }
 
 function openAddModal() {
@@ -107,7 +121,6 @@ function confirmEditParticipant() {
     }
 }
 
-/* --- STATE MANAGEMENT --- */
 function saveState() { localStorage.setItem(STATE_KEY, JSON.stringify(state)); }
 function loadState() {
     const raw = localStorage.getItem(STATE_KEY);
@@ -157,7 +170,6 @@ function updateStartBtn() {
     document.getElementById('btn-start').disabled = !ready;
 }
 
-/* --- TELEGRAM PARSER --- */
 function parseTelegram() {
     const input = document.getElementById('tg-raw-input').value.trim();
     if (!input) return;
@@ -198,7 +210,6 @@ function parseTelegram() {
     alert(`Добавлено: ${added}`);
 }
 
-/* --- SESSION LOGIC --- */
 function startSession() {
     state.isStarted = true;
     saveState();
@@ -270,10 +281,8 @@ function toggleSidebar() {
     }, 350);
 }
 
-/* --- PARTICIPANTS --- */
 function addParticipant(name, msg, color) {
     if (!state.isMonitoring && state.settings.method === 'kick') {
-        // Разрешаем ручное
     }
     
     if (state.participants.find(p => p.name === name)) return;
@@ -324,7 +333,6 @@ function renderParticipants() {
     });
 }
 
-/* --- ROULETTE --- */
 function startRoulette() {
     if (state.settings.method === 'kick' && state.isMonitoring) {
         state.isMonitoring = false;
@@ -398,7 +406,6 @@ function runRouletteAnim(pool, w1, w2) {
     });
 }
 
-/* --- TOURNAMENT CORE --- */
 function getBonusCount(round) { return state.roundBonuses[round] || 1; }
 function setBonusCount(round, val) { 
     state.roundBonuses[round] = parseInt(val); 
@@ -406,7 +413,7 @@ function setBonusCount(round, val) {
     renderBracket();
 }
 
-function createMatch(round, p1Id, p2Id) {
+function createMatch(round, p1Id, p2Id, forcedSlot = null) {
     const empty = Array(5).fill({c:'', w:''});
     
     const part1 = state.participants.find(p=>p.id===p1Id);
@@ -414,20 +421,28 @@ function createMatch(round, p1Id, p2Id) {
     if(part1) part1.status = 'in-game';
     if(part2) part2.status = 'in-game';
 
+    let slot = forcedSlot;
+    if (slot === null) {
+        const matchesInThisRound = state.matches.filter(m => m.round === round);
+        slot = matchesInThisRound.length;
+    }
+
     const match = {
-        id: 'm_' + Date.now(),
+        id: 'm_' + Date.now() + Math.random().toString(36).substr(2,4),
         seq: state.matchSequence++,
         round,
         p1Id, p2Id,
         res: { p1: JSON.parse(JSON.stringify(empty)), p2: JSON.parse(JSON.stringify(empty)) },
         winnerId: null,
-        nextMatchId: null
+        nextMatchId: null,
+        bracketSlot: slot
     };
 
     state.matches.push(match);
     saveState();
     renderParticipants();
     renderBracket();
+    return match;
 }
 
 function deleteMatch(id) {
@@ -457,30 +472,28 @@ function deleteMatch(id) {
     renderBracket();
 }
 
-/* --- LOGIC (PARTIAL SUPPORTED & DECIMAL X) --- */
 function onInput(matchId, pIdx, bonusIdx, field, val) {
     const match = state.matches.find(m => m.id === matchId);
     if (!match) return;
 
     if (pIdx === 1) match.res.p1[bonusIdx][field] = val;
     else match.res.p2[bonusIdx][field] = val;
-    saveState();
-
+    
     updateMatchVisualsOnly(match);
 
     clearTimeout(inputDebounceTimer);
     inputDebounceTimer = setTimeout(() => {
+        saveState();
         checkWinner(match);
     }, 600);
 }
 
-// Расчет с десятыми (151.2x)
 function calculateScore(bonuses, count) {
     let sum = 0, k = 0;
     for(let i=0; i<count; i++) {
         const c = parseFloat(bonuses[i].c);
         const w = parseFloat(bonuses[i].w);
-        if(!isNaN(c) && c > 0 && !isNaN(w)) { // Учитываем только заполненные
+        if(!isNaN(c) && c > 0 && !isNaN(w)) {
             sum += (w/c)*100; 
             k++; 
         }
@@ -503,7 +516,6 @@ function updateMatchVisualsOnly(match) {
 
     const count = getBonusCount(match.round);
     
-    // .toFixed(1) для десятых долей
     const x1 = calculateScore(match.res.p1, count).toFixed(1);
     const x2 = calculateScore(match.res.p2, count).toFixed(1);
 
@@ -580,6 +592,9 @@ function propagateWinner(finishedMatch) {
                 next.p1Id = finishedMatch.winnerId;
             } else if (oldP2 === null || oldP2 === finishedMatch.p1Id || oldP2 === finishedMatch.p2Id) {
                 next.p2Id = finishedMatch.winnerId;
+            } else {
+                if(next.p1Id === null) next.p1Id = finishedMatch.winnerId;
+                else next.p2Id = finishedMatch.winnerId;
             }
 
             next.winnerId = null; 
@@ -593,38 +608,51 @@ function propagateWinner(finishedMatch) {
     }
 
     const nextRound = finishedMatch.round + 1;
-    const waitingMatch = state.matches.find(m => m.round === nextRound && (m.p1Id === null || m.p2Id === null));
+    
+    let mySlot = finishedMatch.bracketSlot;
+    if (mySlot === undefined || mySlot === null) {
+        const roundsMatches = state.matches.filter(m => m.round === finishedMatch.round).sort((a,b) => a.seq - b.seq);
+        mySlot = roundsMatches.indexOf(finishedMatch);
+    }
+    
+    const targetSlot = Math.floor(mySlot / 2);
+    const isTargetP1 = (mySlot % 2) === 0;
 
-    if (waitingMatch) {
-        if (waitingMatch.p1Id === null) waitingMatch.p1Id = finishedMatch.winnerId;
-        else waitingMatch.p2Id = finishedMatch.winnerId;
-        finishedMatch.nextMatchId = waitingMatch.id;
+    let targetMatch = state.matches.find(m => m.round === nextRound && m.bracketSlot === targetSlot);
+
+    if (targetMatch) {
+        if (isTargetP1) targetMatch.p1Id = finishedMatch.winnerId;
+        else targetMatch.p2Id = finishedMatch.winnerId;
+        
+        finishedMatch.nextMatchId = targetMatch.id;
         saveState();
         renderBracket();
     } else {
         const pendingInCurrentRound = state.matches.some(m => m.round === finishedMatch.round && m.id !== finishedMatch.id && !m.winnerId);
         const matchesInNextRound = state.matches.some(m => m.round === nextRound);
-
-        if (!pendingInCurrentRound && !matchesInNextRound) {
-            // Заполняем простое окно победителя
-            document.getElementById('winner-name-display').textContent = winnerName;
-            document.getElementById('winner-msg-display').textContent = winnerMsg;
-            showModal('winner-modal');
-            return;
-        }
-
-        if(!state.roundBonuses[nextRound]) state.roundBonuses[nextRound] = 1;
-
+        
+        if (!state.roundBonuses[nextRound]) state.roundBonuses[nextRound] = 1;
+        
         const empty = Array(5).fill({c:'', w:''});
         const newMatch = {
-            id: 'm_' + Date.now(),
+            id: 'm_' + Date.now() + Math.random().toString(36).substr(2,4),
             seq: state.matchSequence++,
             round: nextRound,
-            p1Id: finishedMatch.winnerId,
-            p2Id: null,
+            p1Id: isTargetP1 ? finishedMatch.winnerId : null,
+            p2Id: isTargetP1 ? null : finishedMatch.winnerId,
             res: { p1: JSON.parse(JSON.stringify(empty)), p2: JSON.parse(JSON.stringify(empty)) },
-            winnerId: null, nextMatchId: null
+            winnerId: null, 
+            nextMatchId: null,
+            bracketSlot: targetSlot
         };
+
+        if (!pendingInCurrentRound && !matchesInNextRound && finishedMatch.round > 1) {
+             document.getElementById('winner-name-display').textContent = winnerName;
+             document.getElementById('winner-msg-display').textContent = winnerMsg;
+             showModal('winner-modal');
+             return;
+        }
+
         state.matches.push(newMatch);
         finishedMatch.nextMatchId = newMatch.id;
         saveState();
@@ -632,10 +660,19 @@ function propagateWinner(finishedMatch) {
     }
 }
 
-/* --- RENDER BRACKET --- */
 function renderBracket() {
     const area = document.getElementById('tournament-area');
     area.innerHTML = '';
+    
+    const hasNextRound = state.matches.some(m => m.round > 1);
+    const rollBtn = document.getElementById('btn-roll');
+    if(rollBtn) {
+        rollBtn.disabled = hasNextRound;
+        rollBtn.style.opacity = hasNextRound ? '0.5' : '1';
+        rollBtn.style.cursor = hasNextRound ? 'not-allowed' : 'pointer';
+        if(hasNextRound) rollBtn.title = "Турнир перешел на следующую стадию";
+        else rollBtn.title = "";
+    }
     
     const roundsMap = {};
     if(state.matches.length === 0) return;
@@ -671,7 +708,10 @@ function renderBracket() {
         
         col.appendChild(header);
 
-        roundsMap[rNum].sort((a,b) => a.seq - b.seq).forEach(m => {
+        roundsMap[rNum].sort((a,b) => {
+            if(a.bracketSlot !== undefined && b.bracketSlot !== undefined) return a.bracketSlot - b.bracketSlot;
+            return a.seq - b.seq;
+        }).forEach(m => {
             col.appendChild(createMatchHTML(m));
         });
 
@@ -785,7 +825,6 @@ function drawConnectors() {
     });
 }
 
-/* --- KICK API --- */
 async function connectKick(chan) {
     if(ws) ws.close();
     if(!chan) return;
@@ -811,7 +850,6 @@ async function connectKick(chan) {
                 
                 const username = data.sender.username;
                 
-                // Фильтр ботов
                 if (username.toLowerCase() === 'botrix' || username.toLowerCase() === 'kickbot') return;
 
                 const txt = data.content.replace(/\[emote:\d+:[^\]]+\]/g, '').trim();
