@@ -3,7 +3,13 @@ const REEL_ITEM_HEIGHT = 60;
 const REEL_WINDOW_HEIGHT = 180; 
 
 let state = {
-    settings: { method: 'kick', channel: '', limit: 50 },
+    settings: { 
+        method: 'kick', 
+        channel: '', 
+        limit: 50,
+        soundEnabled: true,
+        volume: 0.5 
+    },
     roundBonuses: {}, 
     participants: [],
     matches: [],
@@ -17,9 +23,85 @@ let ws = null;
 let processedMsgIds = new Set();
 let resizeTimer = null;
 let inputDebounceTimer = null; 
+let winnerDelayTimer = null; 
+
+// --- AUDIO CONTEXT ---
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+const masterGain = audioCtx.createGain();
+masterGain.connect(audioCtx.destination);
+
+function updateAudioSettings() {
+    masterGain.gain.value = state.settings.soundEnabled ? state.settings.volume : 0;
+}
+
+// Звук победы
+function playWinSound() {
+    if(audioCtx.state === 'suspended') audioCtx.resume();
+    const t = audioCtx.currentTime;
+    
+    // Фанфары
+    [523.25, 659.25, 783.99, 1046.5].forEach((freq, i) => {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(freq, t + i*0.1); 
+        
+        gain.gain.setValueAtTime(0.3, t + i*0.1);
+        gain.gain.exponentialRampToValueAtTime(0.01, t + i*0.1 + 1.5);
+        
+        osc.connect(gain);
+        gain.connect(masterGain);
+        osc.start(t + i*0.1);
+        osc.stop(t + i*0.1 + 1.5);
+    });
+}
+
+// Звук щелчка рулетки
+function playClickSound() {
+    if(audioCtx.state === 'suspended') audioCtx.resume();
+    const t = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    
+    osc.type = 'square'; // Резкий звук
+    osc.frequency.setValueAtTime(200, t);
+    osc.frequency.exponentialRampToValueAtTime(50, t + 0.03); // Быстрый спад
+    
+    gain.gain.setValueAtTime(0.2, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.03);
+    
+    osc.connect(gain);
+    gain.connect(masterGain);
+    
+    osc.start(t);
+    osc.stop(t + 0.04);
+}
+
+// Проигрывание звука рулетки с замедлением (durationMs = время анимации)
+function playRouletteSound(durationMs) {
+    if (!state.settings.soundEnabled) return;
+    
+    const startTime = Date.now();
+    
+    function tick() {
+        const elapsed = Date.now() - startTime;
+        if (elapsed >= durationMs) return;
+
+        playClickSound();
+
+        // Прогресс от 0 до 1
+        const progress = elapsed / durationMs;
+        // Задержка растет экспоненциально: начало 50мс, конец 400мс
+        const nextDelay = 50 + (350 * (progress * progress)); 
+
+        setTimeout(tick, nextDelay);
+    }
+    tick();
+}
 
 window.onload = () => {
     loadState();
+    updateAudioSettings();
     setupEvents();
     if (state.isStarted) {
         restoreSession();
@@ -27,6 +109,8 @@ window.onload = () => {
         updateUIFromSettings();
     }
     
+    startSnow();
+
     window.addEventListener('resize', () => {
         clearTimeout(resizeTimer);
         resizeTimer = setTimeout(() => {
@@ -56,6 +140,9 @@ function setupEvents() {
     document.getElementById('btn-confirm-edit').onclick = confirmEditParticipant;
 
     document.getElementById('btn-toggle-sidebar').onclick = toggleSidebar;
+    
+    // Close banner
+    document.getElementById('close-banner').onclick = hideWinnerBanner;
 
     setupEnterKey('add-modal', 'btn-confirm-add');
     setupEnterKey('settings-modal', 'btn-save-settings');
@@ -95,30 +182,75 @@ function confirmAddParticipant() {
     const name = document.getElementById('manual-name').value.trim();
     const msg = document.getElementById('manual-msg').value.trim() || "Manual";
     if(name) {
-        addParticipant(name, msg, '#ffffff');
+        addParticipant(name, msg, '#ffffff', true);
         hideModal('add-modal');
     }
 }
 
-function openEditModal(id) {
-    const p = state.participants.find(x => x.id === id);
-    if(!p) return;
+function openEditModal(id, matchId = null) {
+    let name = '';
+    let msg = '';
+    
+    if (matchId) {
+        const match = state.matches.find(m => m.id === matchId);
+        if (match) {
+            const p = state.participants.find(x => x.id === id);
+            name = p ? p.name : 'Unknown';
+            msg = (match.p1Id === id) ? (match.p1Msg || "") : (match.p2Msg || "");
+        }
+        document.getElementById('edit-name').disabled = true;
+    } else {
+        const p = state.participants.find(x => x.id === id);
+        if(p) {
+            name = p.name;
+            msg = p.msg;
+        }
+        document.getElementById('edit-name').disabled = false;
+    }
+
     document.getElementById('edit-id').value = id;
-    document.getElementById('edit-msg').value = p.msg;
+    document.getElementById('edit-match-id').value = matchId || '';
+    document.getElementById('edit-name').value = name;
+    document.getElementById('edit-msg').value = msg;
     showModal('edit-modal');
 }
 
 function confirmEditParticipant() {
     const id = document.getElementById('edit-id').value;
+    const matchId = document.getElementById('edit-match-id').value;
+    const name = document.getElementById('edit-name').value;
     const msg = document.getElementById('edit-msg').value;
-    const p = state.participants.find(x => x.id === id);
-    if(p) {
-        p.msg = msg;
-        saveState();
-        renderParticipants();
-        renderBracket();
-        hideModal('edit-modal');
+
+    if (matchId) {
+        const match = state.matches.find(m => m.id === matchId);
+        if (match) {
+            if (match.p1Id === id) match.p1Msg = msg;
+            else if (match.p2Id === id) match.p2Msg = msg;
+            saveState();
+            renderBracket();
+        }
+    } else {
+        const p = state.participants.find(x => x.id === id);
+        if(p) {
+            p.name = name;
+            p.msg = msg;
+            
+            // Если меняем имя, оно должно поменяться везде, а сообщение - глобально, но локальные остаются (если они были перезаписаны)
+            // Но в нашей логике renderBracket берет глобальное если локального нет. 
+            // Поэтому, чтобы обновить везде, обновляем и локальные поля матчей, если они установлены.
+            state.matches.forEach(m => {
+                // Здесь решаем: при глобальном редактировании обновляем ли все матчи? 
+                // Да, пользователь ожидает этого в сайдбаре.
+                if(m.p1Id === id) m.p1Msg = msg;
+                if(m.p2Id === id) m.p2Msg = msg;
+            });
+
+            saveState();
+            renderParticipants();
+            renderBracket();
+        }
     }
+    hideModal('edit-modal');
 }
 
 function saveState() { localStorage.setItem(STATE_KEY, JSON.stringify(state)); }
@@ -128,6 +260,9 @@ function loadState() {
         try {
             state = JSON.parse(raw);
             if (!state.roundBonuses) state.roundBonuses = {};
+            // Init default sound settings if missing
+            if (state.settings.soundEnabled === undefined) state.settings.soundEnabled = true;
+            if (state.settings.volume === undefined) state.settings.volume = 0.5;
         } catch(e) { console.error("Save load error", e); }
     }
 }
@@ -137,6 +272,9 @@ function updateUIFromSettings() {
     document.getElementById('setting-method').value = s.method;
     document.getElementById('setting-channel').value = s.channel;
     document.getElementById('setting-limit').value = s.limit;
+    document.getElementById('setting-sound-enabled').checked = s.soundEnabled;
+    document.getElementById('setting-volume').value = s.volume;
+    
     document.getElementById('max-count-display').textContent = s.limit;
     toggleMethodSettings();
     updateStartBtn();
@@ -155,7 +293,10 @@ function saveSettings() {
     state.settings.method = document.getElementById('setting-method').value;
     state.settings.channel = document.getElementById('setting-channel').value.trim();
     state.settings.limit = parseInt(document.getElementById('setting-limit').value);
+    state.settings.soundEnabled = document.getElementById('setting-sound-enabled').checked;
+    state.settings.volume = parseFloat(document.getElementById('setting-volume').value);
     
+    updateAudioSettings();
     document.getElementById('max-count-display').textContent = state.settings.limit;
     saveState();
     updateStartBtn();
@@ -184,7 +325,7 @@ function parseTelegram() {
     const flush = () => {
         if(bufferName) {
             const msg = bufferMsg.join(' ').trim() || 'Участник';
-            addParticipant(bufferName, msg, '#ccc');
+            addParticipant(bufferName, msg, '#ccc', true); 
             added++;
         }
     };
@@ -281,8 +422,13 @@ function toggleSidebar() {
     }, 350);
 }
 
-function addParticipant(name, msg, color) {
-    if (!state.isMonitoring && state.settings.method === 'kick') {
+function addParticipant(name, msg, color, isManual = false) {
+    if (state.settings.method === 'kick' && !isManual) {
+        if (state.participants.length >= state.settings.limit) {
+            state.isMonitoring = false;
+            checkLimit(); 
+            return;
+        }
     }
     
     if (state.participants.find(p => p.name === name)) return;
@@ -354,22 +500,28 @@ function startRoulette() {
     const p1 = available[idx1];
     const p2 = available[idx2];
 
-    runRouletteAnim(available, p1, p2).then(() => {
+    runRouletteAnim(available, p1, p2, false).then(() => {
         createMatch(1, p1.id, p2.id);
     });
 }
 
-function runRouletteAnim(pool, w1, w2) {
+function runRouletteAnim(pool, p1, p2, isSingle = false) {
     return new Promise(resolve => {
         const modal = document.getElementById('roulette-modal');
+        const wrapper = document.getElementById('reels-wrapper');
         const sL = document.getElementById('strip-left');
         const sR = document.getElementById('strip-right');
+        
         modal.classList.remove('hidden');
+        
+        if(isSingle) wrapper.classList.add('single-mode');
+        else wrapper.classList.remove('single-mode');
 
         const WIN_INDEX = 24; 
         const TOTAL_ITEMS = 35;
 
         const buildStrip = (winner) => {
+            if (!winner) return ''; 
             let html = '';
             for(let i=0; i<TOTAL_ITEMS; i++) {
                 if(i === WIN_INDEX) {
@@ -382,21 +534,26 @@ function runRouletteAnim(pool, w1, w2) {
             return html;
         };
 
-        sL.innerHTML = buildStrip(w1);
-        sR.innerHTML = buildStrip(w2);
+        sL.innerHTML = buildStrip(p1);
+        if(!isSingle) sR.innerHTML = buildStrip(p2);
 
         sL.style.transition = 'none'; sL.style.transform = 'translateY(0)';
-        sR.style.transition = 'none'; sR.style.transform = 'translateY(0)';
+        if(!isSingle) { sR.style.transition = 'none'; sR.style.transform = 'translateY(0)'; }
 
         const centerOffset = (REEL_WINDOW_HEIGHT / 2) - ((WIN_INDEX * REEL_ITEM_HEIGHT) + (REEL_ITEM_HEIGHT / 2));
         
+        // Запуск звука рулетки (4000мс = 4с)
+        playRouletteSound(4000);
+
         setTimeout(() => {
             const css = `transform 4s cubic-bezier(0.15, 0.9, 0.3, 1)`;
             sL.style.transition = css;
-            sR.style.transition = css;
-            
             sL.style.transform = `translateY(${centerOffset}px)`;
-            sR.style.transform = `translateY(${centerOffset}px)`;
+            
+            if(!isSingle) {
+                sR.style.transition = css;
+                sR.style.transform = `translateY(${centerOffset}px)`;
+            }
         }, 50);
 
         setTimeout(() => {
@@ -432,6 +589,8 @@ function createMatch(round, p1Id, p2Id, forcedSlot = null) {
         seq: state.matchSequence++,
         round,
         p1Id, p2Id,
+        p1Msg: part1 ? part1.msg : "",
+        p2Msg: part2 ? part2.msg : "",
         res: { p1: JSON.parse(JSON.stringify(empty)), p2: JSON.parse(JSON.stringify(empty)) },
         winnerId: null,
         nextMatchId: null,
@@ -470,6 +629,42 @@ function deleteMatch(id) {
     saveState();
     renderParticipants();
     renderBracket();
+    
+    setTimeout(drawConnectors, 100);
+}
+
+function rerollMatchPlayer(matchId, pSlot) {
+    if(!confirm("Вы уверены, что хотите сделать рерол этого игрока?")) return;
+
+    const match = state.matches.find(m => m.id === matchId);
+    if(!match) return;
+
+    const available = state.participants.filter(p => p.status === 'waiting');
+    if (available.length === 0) {
+        alert("Нет свободных игроков для замены!");
+        return;
+    }
+
+    const newP = available[Math.floor(Math.random() * available.length)];
+
+    runRouletteAnim(available, newP, null, true).then(() => {
+        const oldPid = pSlot === 1 ? match.p1Id : match.p2Id;
+        const oldP = state.participants.find(p => p.id === oldPid);
+        if(oldP) oldP.status = 'waiting';
+        
+        newP.status = 'in-game';
+        if (pSlot === 1) {
+            match.p1Id = newP.id;
+            match.p1Msg = newP.msg; 
+        } else {
+            match.p2Id = newP.id;
+            match.p2Msg = newP.msg;
+        }
+
+        saveState();
+        renderParticipants();
+        renderBracket();
+    });
 }
 
 function onInput(matchId, pIdx, bonusIdx, field, val) {
@@ -482,10 +677,13 @@ function onInput(matchId, pIdx, bonusIdx, field, val) {
     updateMatchVisualsOnly(match);
 
     clearTimeout(inputDebounceTimer);
+    clearTimeout(winnerDelayTimer); 
+
+    saveState(); 
+
     inputDebounceTimer = setTimeout(() => {
-        saveState();
         checkWinner(match);
-    }, 600);
+    }, 50); 
 }
 
 function calculateScore(bonuses, count) {
@@ -516,8 +714,11 @@ function updateMatchVisualsOnly(match) {
 
     const count = getBonusCount(match.round);
     
-    const x1 = calculateScore(match.res.p1, count).toFixed(1);
-    const x2 = calculateScore(match.res.p2, count).toFixed(1);
+    const x1Val = calculateScore(match.res.p1, count);
+    const x2Val = calculateScore(match.res.p2, count);
+    
+    const x1 = x1Val.toFixed(1);
+    const x2 = x2Val.toFixed(1);
 
     el.querySelector('.x1').textContent = x1 + 'x';
     if(match.p2Id) el.querySelector('.x2').textContent = x2 + 'x';
@@ -536,9 +737,9 @@ function updateMatchVisualsOnly(match) {
     }
 
     if (hasAnyData(match.res.p1, match.res.p2, count)) {
-        if (parseFloat(x1) > parseFloat(x2)) {
+        if (x1Val > x2Val) {
             p1Box.classList.add('winner'); p2Box.classList.add('loser');
-        } else if (parseFloat(x2) > parseFloat(x1)) {
+        } else if (x2Val > x1Val) {
             p2Box.classList.add('winner'); p1Box.classList.add('loser');
         }
     }
@@ -546,30 +747,23 @@ function updateMatchVisualsOnly(match) {
 
 function checkWinner(match) {
     const count = getBonusCount(match.round);
+    let newWinner = null;
 
     if (!match.p2Id) {
         let hasData = false;
         for(let i=0; i<count; i++) if(match.res.p1[i].c!=='' && match.res.p1[i].w!=='') hasData = true;
-
-        if(hasData) {
-            if (match.winnerId !== match.p1Id) {
-                match.winnerId = match.p1Id;
-                saveState();
-                propagateWinner(match);
-            }
+        if(hasData) newWinner = match.p1Id;
+    } else {
+        if(hasAnyData(match.res.p1, match.res.p2, count)) {
+            const x1 = calculateScore(match.res.p1, count);
+            const x2 = calculateScore(match.res.p2, count);
+            if(x1 > x2) newWinner = match.p1Id;
+            else if(x2 > x1) newWinner = match.p2Id;
         }
-        return;
     }
 
-    if(hasAnyData(match.res.p1, match.res.p2, count)) {
-        const x1 = calculateScore(match.res.p1, count);
-        const x2 = calculateScore(match.res.p2, count);
-        
-        let newWinner = null;
-        if(x1 > x2) newWinner = match.p1Id;
-        else if(x2 > x1) newWinner = match.p2Id;
-
-        if (newWinner && newWinner !== match.winnerId) {
+    if (newWinner) {
+        if (newWinner !== match.winnerId) {
             match.winnerId = newWinner;
             saveState();
             propagateWinner(match);
@@ -578,9 +772,10 @@ function checkWinner(match) {
 }
 
 function propagateWinner(finishedMatch) {
-    const winnerObj = state.participants.find(p=>p.id === finishedMatch.winnerId);
+    const winnerId = finishedMatch.winnerId;
+    const winnerObj = state.participants.find(p=>p.id === winnerId);
     const winnerName = winnerObj?.name || 'Unknown';
-    const winnerMsg = winnerObj?.msg || '...';
+    const winnerMsg = (finishedMatch.p1Id === winnerId ? finishedMatch.p1Msg : finishedMatch.p2Msg) || winnerObj?.msg;
 
     if (finishedMatch.nextMatchId) {
         const next = state.matches.find(m => m.id === finishedMatch.nextMatchId);
@@ -589,12 +784,14 @@ function propagateWinner(finishedMatch) {
             const oldP2 = next.p2Id;
             
             if(oldP1 === null || oldP1 === finishedMatch.p1Id || oldP1 === finishedMatch.p2Id) {
-                next.p1Id = finishedMatch.winnerId;
+                next.p1Id = winnerId;
+                next.p1Msg = winnerMsg; 
             } else if (oldP2 === null || oldP2 === finishedMatch.p1Id || oldP2 === finishedMatch.p2Id) {
-                next.p2Id = finishedMatch.winnerId;
+                next.p2Id = winnerId;
+                next.p2Msg = winnerMsg; 
             } else {
-                if(next.p1Id === null) next.p1Id = finishedMatch.winnerId;
-                else next.p2Id = finishedMatch.winnerId;
+                if(next.p1Id === null) { next.p1Id = winnerId; next.p1Msg = winnerMsg; }
+                else { next.p2Id = winnerId; next.p2Msg = winnerMsg; }
             }
 
             next.winnerId = null; 
@@ -608,7 +805,6 @@ function propagateWinner(finishedMatch) {
     }
 
     const nextRound = finishedMatch.round + 1;
-    
     let mySlot = finishedMatch.bracketSlot;
     if (mySlot === undefined || mySlot === null) {
         const roundsMatches = state.matches.filter(m => m.round === finishedMatch.round).sort((a,b) => a.seq - b.seq);
@@ -621,8 +817,8 @@ function propagateWinner(finishedMatch) {
     let targetMatch = state.matches.find(m => m.round === nextRound && m.bracketSlot === targetSlot);
 
     if (targetMatch) {
-        if (isTargetP1) targetMatch.p1Id = finishedMatch.winnerId;
-        else targetMatch.p2Id = finishedMatch.winnerId;
+        if (isTargetP1) { targetMatch.p1Id = winnerId; targetMatch.p1Msg = winnerMsg; }
+        else { targetMatch.p2Id = winnerId; targetMatch.p2Msg = winnerMsg; }
         
         finishedMatch.nextMatchId = targetMatch.id;
         saveState();
@@ -638,8 +834,10 @@ function propagateWinner(finishedMatch) {
             id: 'm_' + Date.now() + Math.random().toString(36).substr(2,4),
             seq: state.matchSequence++,
             round: nextRound,
-            p1Id: isTargetP1 ? finishedMatch.winnerId : null,
-            p2Id: isTargetP1 ? null : finishedMatch.winnerId,
+            p1Id: isTargetP1 ? winnerId : null,
+            p2Id: isTargetP1 ? null : winnerId,
+            p1Msg: isTargetP1 ? winnerMsg : "",
+            p2Msg: isTargetP1 ? "" : winnerMsg,
             res: { p1: JSON.parse(JSON.stringify(empty)), p2: JSON.parse(JSON.stringify(empty)) },
             winnerId: null, 
             nextMatchId: null,
@@ -647,9 +845,10 @@ function propagateWinner(finishedMatch) {
         };
 
         if (!pendingInCurrentRound && !matchesInNextRound && finishedMatch.round > 1) {
-             document.getElementById('winner-name-display').textContent = winnerName;
-             document.getElementById('winner-msg-display').textContent = winnerMsg;
-             showModal('winner-modal');
+             showWinnerNotification(winnerName);
+             playWinSound();
+             launchConfetti();
+             renderBracket(); 
              return;
         }
 
@@ -660,8 +859,35 @@ function propagateWinner(finishedMatch) {
     }
 }
 
+function showWinnerNotification(name) {
+    const banner = document.getElementById('winner-banner');
+    document.getElementById('banner-winner-name').textContent = name;
+    
+    setTimeout(() => {
+        banner.classList.add('show');
+    }, 3000);
+}
+
+function hideWinnerBanner() {
+    document.getElementById('winner-banner').classList.remove('show');
+}
+
 function renderBracket() {
+    // FIX: Cursor Logic (Capture)
+    let activeId = null;
+    let selectionStart = 0;
+    let selectionEnd = 0;
+    
+    if(document.activeElement && document.activeElement.tagName === 'INPUT') {
+        activeId = document.activeElement.id;
+        selectionStart = document.activeElement.selectionStart;
+        selectionEnd = document.activeElement.selectionEnd;
+    }
+
     const area = document.getElementById('tournament-area');
+    const scrollLeft = area.scrollLeft;
+    const scrollTop = area.scrollTop;
+
     area.innerHTML = '';
     
     const hasNextRound = state.matches.some(m => m.round > 1);
@@ -718,8 +944,24 @@ function renderBracket() {
         area.appendChild(col);
     });
 
+    area.scrollTop = scrollTop;
+    area.scrollLeft = scrollLeft;
+
     setTimeout(() => {
         drawConnectors();
+        // FIX: Cursor Logic (Restore)
+        if(activeId) {
+            const el = document.getElementById(activeId);
+            if(el) {
+                el.focus();
+                // Важно: setSelectionRange работает только если элемент в фокусе и это text/search/url/tel/password
+                // Для type="number" это может не работать в некоторых браузерах.
+                // Если не работает, меняем type="text" или миримся. Но обычно работает.
+                try {
+                    el.setSelectionRange(selectionStart, selectionEnd);
+                } catch(e) {}
+            }
+        }
     }, 0);
 }
 
@@ -731,6 +973,9 @@ function createMatchHTML(m) {
     const p1 = state.participants.find(p=>p.id===m.p1Id) || {name:'Ожидание...', msg:'...', color:'#555'};
     const p2 = m.p2Id ? (state.participants.find(p=>p.id===m.p2Id) || {name:'Ожидание...', msg:'...', color:'#555'}) : null;
 
+    const p1Msg = m.p1Msg || p1.msg;
+    const p2Msg = m.p2Msg || (p2 ? p2.msg : '...');
+
     const bonusesCount = getBonusCount(m.round);
 
     const genInputs = (pidx, resArr) => {
@@ -738,16 +983,26 @@ function createMatchHTML(m) {
         for(let i=0; i<bonusesCount; i++) {
             const valC = resArr[i] ? resArr[i].c : '';
             const valW = resArr[i] ? resArr[i].w : '';
+            const idC = `input_${m.id}_${pidx}_${i}_c`;
+            const idW = `input_${m.id}_${pidx}_${i}_w`;
+            
+            // Используем type="text" с inputmode="numeric" для лучшей поддержки курсора
             html += `
             <div class="inputs-row">
-                <input type="number" placeholder="Buy" value="${valC}" 
+                <input id="${idC}" type="text" inputmode="decimal" placeholder="Buy" value="${valC}" 
                    oninput="onInput('${m.id}', ${pidx}, ${i}, 'c', this.value)">
-                <input type="number" placeholder="Win" value="${valW}" 
+                <input id="${idW}" type="text" inputmode="decimal" placeholder="Win" value="${valW}" 
                    oninput="onInput('${m.id}', ${pidx}, ${i}, 'w', this.value)">
             </div>`;
         }
         return html;
     };
+
+    const rerollBtn1 = (m.round == 1 && m.p1Id) ? `<i class="fas fa-sync-alt btn-reroll" title="Реролл" onclick="rerollMatchPlayer('${m.id}', 1)"></i>` : '';
+    const rerollBtn2 = (m.round == 1 && m.p2Id) ? `<i class="fas fa-sync-alt btn-reroll" title="Реролл" onclick="rerollMatchPlayer('${m.id}', 2)"></i>` : '';
+
+    const editBtn1 = (m.p1Id) ? `<i class="fas fa-pencil-alt btn-edit-match" title="Изм. сообщение" onclick="openEditModal('${m.p1Id}', '${m.id}')"></i>` : '';
+    const editBtn2 = (m.p2Id) ? `<i class="fas fa-pencil-alt btn-edit-match" title="Изм. сообщение" onclick="openEditModal('${m.p2Id}', '${m.id}')"></i>` : '';
 
     let html = `
         <div class="match-top">
@@ -757,10 +1012,14 @@ function createMatchHTML(m) {
 
         <div class="player-box p1-box">
             <div class="pb-header">
-                <span class="pb-name" style="color:${p1.color}">${p1.name}</span>
+                <div class="pb-name-wrap">
+                    <span class="pb-name" style="color:${p1.color}">${p1.name}</span>
+                    ${rerollBtn1}
+                    ${editBtn1}
+                </div>
                 <span class="pb-x x1">0x</span>
             </div>
-            <div class="pb-sub">${p1.msg}</div>
+            <div class="pb-sub" data-pid="${p1.id || ''}">${p1Msg}</div>
             <div class="pb-inputs">${genInputs(1, m.res.p1)}</div>
         </div>
     `;
@@ -769,17 +1028,20 @@ function createMatchHTML(m) {
          html += `
             <div class="player-box p2-box">
                 <div class="pb-header">
-                    <span class="pb-name" style="color:${p2.color}">${p2.name}</span>
+                    <div class="pb-name-wrap">
+                        <span class="pb-name" style="color:${p2.color}">${p2.name}</span>
+                        ${rerollBtn2}
+                        ${editBtn2}
+                    </div>
                     <span class="pb-x x2">0x</span>
                 </div>
-                <div class="pb-sub">${p2.msg}</div>
+                <div class="pb-sub" data-pid="${p2.id || ''}">${p2Msg}</div>
                 <div class="pb-inputs">${genInputs(2, m.res.p2)}</div>
             </div>
         `;
     }
 
     div.innerHTML = html;
-
     setTimeout(() => updateMatchVisualsOnly(m), 0);
     return div;
 }
@@ -854,8 +1116,103 @@ async function connectKick(chan) {
 
                 const txt = data.content.replace(/\[emote:\d+:[^\]]+\]/g, '').trim();
                 const color = data.sender.identity.color;
-                if(txt) addParticipant(username, txt, color);
+                if(txt) addParticipant(username, txt, color, false);
             }
         };
     } catch(e) { console.log(e); }
+}
+
+function launchConfetti() {
+    const canvas = document.getElementById('confetti-canvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    
+    const particles = [];
+    const colors = ['#f00', '#0f0', '#00f', '#ff0', '#0ff', '#f0f', '#fff'];
+    
+    for(let i=0; i<200; i++) {
+        particles.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height - canvas.height,
+            vx: Math.random() * 4 - 2,
+            vy: Math.random() * 4 + 2,
+            c: colors[Math.floor(Math.random() * colors.length)],
+            s: Math.random() * 5 + 5
+        });
+    }
+    
+    let animId;
+    function draw() {
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        let active = false;
+        particles.forEach(p => {
+            p.x += p.vx;
+            p.y += p.vy;
+            ctx.fillStyle = p.c;
+            ctx.fillRect(p.x, p.y, p.s, p.s);
+            if(p.y < canvas.height) active = true;
+        });
+        
+        if(active) animId = requestAnimationFrame(draw);
+        else cancelAnimationFrame(animId);
+    }
+    draw();
+}
+
+// FIX 2: Better Snow Logic (Slower, random float)
+function startSnow() {
+    const canvas = document.getElementById('snow-canvas');
+    const ctx = canvas.getContext('2d');
+    
+    let width = window.innerWidth;
+    let height = window.innerHeight;
+    canvas.width = width;
+    canvas.height = height;
+
+    const flakes = [];
+    // Меньше снежинок, но они крупнее
+    for(let i=0; i<60; i++) {
+        flakes.push({
+            x: Math.random() * width,
+            y: Math.random() * height,
+            r: Math.random() * 2 + 1.5, // Размер
+            speed: Math.random() * 0.5 + 0.3, // Очень медленно
+            drift: Math.random() * 1 - 0.5 // Легкое покачивание
+        });
+    }
+
+    function drawSnow() {
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+        ctx.beginPath();
+        for(let i = 0; i < flakes.length; i++) {
+            const f = flakes[i];
+            ctx.moveTo(f.x, f.y);
+            ctx.arc(f.x, f.y, f.r, 0, Math.PI*2, true);
+        }
+        ctx.fill();
+        moveSnow();
+        requestAnimationFrame(drawSnow);
+    }
+
+    function moveSnow() {
+        for(let i = 0; i < flakes.length; i++) {
+            const f = flakes[i];
+            f.y += f.speed;
+            f.x += f.drift + Math.sin(f.y * 0.01) * 0.5; // Синусоидальное движение
+
+            if(f.y > height) {
+                flakes[i] = {
+                    x: Math.random() * width, 
+                    y: -10, 
+                    r: f.r, 
+                    speed: f.speed, 
+                    drift: Math.random() * 1 - 0.5
+                };
+            }
+        }
+    }
+
+    drawSnow();
 }
