@@ -14,6 +14,43 @@ body {
 ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: #6242ff; }
 
+/* Snow & Confetti Canvas */
+#snow-canvas, #confetti-canvas {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; 
+}
+#snow-canvas { z-index: 1; opacity: 0.8; } 
+#confetti-canvas { z-index: 5000; }
+
+/* --- Winner Banner (Top Notification) --- */
+.winner-banner {
+    position: fixed; top: -120px; left: 0; width: 100%; height: 100px;
+    background: linear-gradient(90deg, #15151a 0%, #2e2e42 50%, #15151a 100%);
+    border-bottom: 2px solid #ffcc00;
+    z-index: 6000;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 5px 30px rgba(0,0,0,0.8);
+    transition: top 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.winner-banner.show { top: 0; }
+.winner-content {
+    display: flex; align-items: center; gap: 20px;
+}
+.winner-icon { font-size: 40px; color: #ffcc00; animation: bounce 1s infinite; }
+.winner-text { display: flex; flex-direction: column; }
+.winner-label { font-size: 12px; color: #888; letter-spacing: 2px; text-transform: uppercase; }
+.winner-name { font-size: 32px; font-weight: 800; color: #fff; text-shadow: 0 0 15px rgba(255,255,255,0.4); }
+.btn-close-banner {
+    background: rgba(255,255,255,0.1); border: 1px solid #555; 
+    color: #fff; width: 30px; height: 30px; border-radius: 50%;
+    cursor: pointer; margin-left: 30px; display: flex; align-items: center; justify-content: center;
+    transition: 0.2s;
+}
+.btn-close-banner:hover { background: #ff4444; border-color: #ff4444; }
+
+@keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+
+
 .main-logo-img {
     width: 100px; height: 100px; object-fit: cover;
     border-radius: 50%; margin-bottom: 20px;
@@ -225,18 +262,32 @@ textarea { height: 100px; resize: vertical; }
 .player-box {
     background: #121216; padding: 10px; border-radius: 8px;
     margin-bottom: 8px; border: 1px solid transparent; transition: 0.3s;
+    position: relative;
 }
 .player-box.winner { border-color: #00ffaa; box-shadow: 0 0 10px rgba(0,255,170,0.15); }
 .player-box.loser { opacity: 0.4; filter: grayscale(1); }
 
 .pb-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.pb-name { font-weight: 800; font-size: 15px; color: #fff; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pb-name-wrap { display: flex; align-items: center; gap: 6px; max-width: 180px;}
+.pb-name { font-weight: 800; font-size: 15px; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pb-x { color: #ffcc00; font-weight: 800; font-size: 16px; }
 .pb-sub { font-size: 12px; color: #aaa; margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600;}
+
+/* Reroll & Edit Buttons */
+.btn-reroll {
+    cursor: pointer; color: #555; font-size: 12px; margin-left: 5px; transition: 0.2s;
+}
+.btn-reroll:hover { color: #6242ff; transform: rotate(180deg); }
+
+.btn-edit-match {
+    cursor: pointer; color: #444; font-size: 10px; margin-left: 5px; transition: 0.2s;
+}
+.btn-edit-match:hover { color: #fff; }
 
 .inputs-row { display: flex; gap: 5px; }
 .inputs-row input {
     padding: 6px; text-align: center; font-size: 13px;
+    width: 100%;
     background: #08080a; border: 1px solid #333; color: #eee; -moz-appearance: textfield;
 }
 .inputs-row input:focus { border-color: #6242ff; background: #15151a; }
@@ -258,7 +309,18 @@ textarea { height: 100px; resize: vertical; }
 .reels-wrapper {
     display: flex; gap: 40px; padding: 30px;
     background: #15151a; border-radius: 20px; border: 1px solid #333;
+    transition: all 0.3s;
 }
+
+/* Single Mode (Reroll) CSS */
+.reels-wrapper.single-mode #col-right,
+.reels-wrapper.single-mode #vs-badge {
+    display: none;
+}
+.reels-wrapper.single-mode {
+    justify-content: center;
+}
+
 .slot-machine {
     width: 200px; height: 180px;
     background: #000; border-radius: 10px; border: 2px solid #444;
