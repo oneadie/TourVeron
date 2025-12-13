@@ -11,6 +11,20 @@
 </head>
 <body>
 
+    <canvas id="snow-canvas"></canvas>
+    <canvas id="confetti-canvas"></canvas>
+
+    <div id="winner-banner" class="winner-banner">
+        <div class="winner-content">
+            <i class="fas fa-trophy winner-icon"></i>
+            <div class="winner-text">
+                <span class="winner-label">ПОБЕДИТЕЛЬ ТУРНИРА</span>
+                <span id="banner-winner-name" class="winner-name">Никнейм</span>
+            </div>
+            <button id="close-banner" class="btn-close-banner"><i class="fas fa-times"></i></button>
+        </div>
+    </div>
+
     <div id="start-overlay" class="overlay">
         <header>
             <div class="logo-area">
@@ -45,9 +59,21 @@
                 <small style="display:block; margin-top:5px; color:#aaa;">Загружено: <span id="tg-count">0</span></small>
             </div>
             <div id="limit-group" class="form-group">
-                <label>Макс. участников:</label>
+                <label>Макс. участников (для авто-сбора):</label>
                 <input type="number" id="setting-limit" value="50">
             </div>
+            
+            <hr style="border: 0; border-top: 1px solid #333; margin: 15px 0;">
+            
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between;">
+                <label style="margin:0">Звук:</label>
+                <input type="checkbox" id="setting-sound-enabled" style="width:20px; height:20px;">
+            </div>
+            <div class="form-group">
+                <label>Громкость:</label>
+                <input type="range" id="setting-volume" min="0" max="1" step="0.1" value="0.5">
+            </div>
+
             <div class="modal-actions">
                 <button id="btn-save-settings" class="btn-save">Сохранить и Закрыть</button>
             </div>
@@ -88,6 +114,13 @@
             <span onclick="document.getElementById('edit-modal').classList.add('hidden')" class="close">&times;</span>
             <h2>Редактировать</h2>
             <input type="hidden" id="edit-id">
+            <input type="hidden" id="edit-match-id">
+            
+            <div class="form-group">
+                <label>Имя (Никнейм):</label>
+                <input type="text" id="edit-name"> 
+            </div>
+            
             <div class="form-group">
                 <label>Сообщение:</label>
                 <input type="text" id="edit-msg">
@@ -99,38 +132,20 @@
     </div>
 
     <div id="roulette-modal" class="modal hidden">
-        <div class="reels-wrapper">
-            <div class="slot-column">
+        <div class="reels-wrapper" id="reels-wrapper">
+            <div class="slot-column" id="col-left">
                 <div class="slot-machine">
                     <div class="reel-mask"><ul class="reel" id="strip-left"></ul></div>
                     <div class="win-line"></div>
                 </div>
             </div>
-            <div class="vs-badge">VS</div>
-            <div class="slot-column">
+            <div class="vs-badge" id="vs-badge">VS</div>
+            <div class="slot-column" id="col-right">
                 <div class="slot-machine">
                     <div class="reel-mask"><ul class="reel" id="strip-right"></ul></div>
                     <div class="win-line"></div>
                 </div>
             </div>
-        </div>
-    </div>
-
-    <div id="winner-modal" class="modal hidden">
-        <div class="modal-content winner-simple-content" style="text-align: center;">
-            <span onclick="document.getElementById('winner-modal').classList.add('hidden')" class="close">&times;</span>
-            
-            <i class="fas fa-trophy" style="font-size: 60px; color: #ffcc00; margin-bottom: 15px;"></i>
-            
-            <h2 style="color: #fff; text-transform: uppercase; margin: 0 0 20px 0;">Поздравляю!</h2>
-            
-            <h1 id="winner-name-display" style="color: #00ffaa; font-size: 40px; margin: 10px 0; text-shadow: 0 0 20px rgba(0,255,170,0.3);">NAME</h1>
-            
-            <div style="background: #222; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #333;">
-                <p id="winner-msg-display" style="color: #ccc; font-size: 18px; margin: 0; font-style: italic;">Message...</p>
-            </div>
-
-            <button onclick="document.getElementById('winner-modal').classList.add('hidden')" class="btn-save">Отлично</button>
         </div>
     </div>
 
@@ -189,4 +204,3 @@
     <script src="script.js"></script>
 </body>
 </html>
-
